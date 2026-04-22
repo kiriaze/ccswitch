@@ -1,3 +1,5 @@
+.DS_Store
 .claude/
+menubar/.DS_Store
 menubar/ccswitch-menubar
 menubar/ccswitch.app

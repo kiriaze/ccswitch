@@ -82,14 +82,20 @@ Account profiles are stored in `~/.claude-accounts/<name>.json` (chmod 600).
 
 A native macOS menu bar app lives in `menubar/`. Requires macOS 13+, no Xcode needed — builds from the command line.
 
-### Build & install
+### Install from release
+
+Download `ccswitch.app.zip` from the [latest release](https://github.com/kiriaze/ccswitch/releases/latest), unzip, and drag `ccswitch.app` to `/Applications`.
+
+**First launch:** macOS will block it since it isn't notarized. Right-click `ccswitch.app` → **Open** → **Open** to allow it once. After that it opens normally.
+
+Then add **ccswitch** to **System Settings → General → Login Items** so it launches at startup.
+
+### Build from source
 
 ```bash
 cd menubar
 make install        # builds ccswitch.app and copies to /Applications
 ```
-
-Then add **ccswitch** to **System Settings → General → Login Items** so it launches at startup.
 
 ### Usage
 
