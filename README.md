@@ -11,16 +11,18 @@ Works with both the Claude Code CLI and the Claude desktop app.
 
 ## Install
 
+Clone anywhere, install, then delete the repo — the script is self-contained once copied to your PATH.
+
 ```bash
-# Run from anywhere after cloning
-sudo bash ccswitch install
+git clone https://github.com/kiriaze/ccswitch.git /tmp/ccswitch
+sudo bash /tmp/ccswitch/ccswitch install
+rm -rf /tmp/ccswitch
 ```
 
-Or manually copy to your PATH:
+Or one-liner:
 
 ```bash
-cp ccswitch ~/.local/bin/ccswitch
-chmod +x ~/.local/bin/ccswitch
+curl -fsSL https://raw.githubusercontent.com/kiriaze/ccswitch/main/ccswitch -o /tmp/ccswitch && sudo install /tmp/ccswitch /usr/local/bin/ccswitch && rm /tmp/ccswitch
 ```
 
 ## Usage
@@ -73,3 +75,21 @@ Account profiles are stored in `~/.claude-accounts/<name>.json` (chmod 600).
 - The desktop app must quit and relaunch for the switch to take effect — there is no hot-reload
 - Claude Code CLI picks up the new credentials immediately after the file swap
 - Accounts are stored locally in `~/.claude-accounts/` — no cloud sync, no keychain
+
+## Roadmap
+
+### v2 — macOS menu bar app
+
+A native Swift menu bar app (`NSStatusItem`) that replaces the CLI for desktop users:
+
+- Lives in the macOS menu bar, launches at login
+- Dropdown shows all saved accounts; clicking one switches immediately and relaunches Claude
+- Add/remove accounts from within the app (no terminal required)
+- Active account marked, email displayed
+
+The credential swap logic stays identical — the menu bar app is just a GUI shell around the same file operations. Target: ~200 lines of Swift, zero external dependencies.
+
+### Considered but unlikely
+
+- **Hotkeys** — probably unnecessary once the menu bar is one click away
+- **Plan usage / context window metrics** — no public Anthropic API for this; scraping the web session would be fragile
