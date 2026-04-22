@@ -36,10 +36,13 @@ class ProcessManager {
     }
 
     func launchClaude() {
-        let task = Process()
-        task.launchPath = "/usr/bin/open"
-        task.arguments  = ["-a", "Claude"]
-        try? task.run()
+        // Delay gives pkill time to fully reap CLI processes before the app relaunches
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) {
+            let task = Process()
+            task.launchPath = "/usr/bin/open"
+            task.arguments  = ["-a", "Claude"]
+            try? task.run()
+        }
     }
 
     private func killCLI() {

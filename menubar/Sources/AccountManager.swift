@@ -45,6 +45,19 @@ class AccountManager {
             .trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
+    /// Email from ~/.claude.json — may be stale if Claude desktop logged in a new user
+    /// without the CLI having run yet. Exposed so the UI can let the user correct it.
+    func liveEmail() -> String? {
+        guard
+            let data  = try? Data(contentsOf: claudeJSON),
+            let obj   = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+            let oauth = obj["oauthAccount"] as? [String: Any],
+            let email = oauth["emailAddress"] as? String,
+            !email.isEmpty
+        else { return nil }
+        return email
+    }
+
     /// True when the live logged-in Claude session is already saved as an account.
     /// Used to disable "Save Current Account" when there's nothing new to save.
     func isCurrentSessionSaved() -> Bool {
@@ -64,7 +77,9 @@ class AccountManager {
     // MARK: - Mutations
 
     /// Snapshots the currently logged-in Claude session under `name`.
-    func saveCurrentAccount(name: String) throws {
+    /// `email` overrides what's in ~/.claude.json — useful when the desktop app hasn't
+    /// flushed the new account's oauthAccount to disk yet.
+    func saveCurrentAccount(name: String, email overrideEmail: String? = nil) throws {
         try FileManager.default.createDirectory(at: accountsDir, withIntermediateDirectories: true)
 
         guard
@@ -73,7 +88,7 @@ class AccountManager {
             let oauthAccount = claudeObj["oauthAccount"] as? [String: Any]
         else { throw CCSwitchError.notLoggedIn }
 
-        let email = oauthAccount["emailAddress"] as? String ?? "unknown"
+        let email = overrideEmail ?? oauthAccount["emailAddress"] as? String ?? "unknown"
 
         var tokenCache = ""
         if

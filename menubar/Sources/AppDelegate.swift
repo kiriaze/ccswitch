@@ -77,24 +77,39 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     @objc private func saveAccount() {
+        let detectedEmail = AccountManager.shared.liveEmail() ?? ""
+
         let alert = NSAlert()
         alert.messageText     = "Save Current Account"
-        alert.informativeText = "Enter a name for the currently logged-in Claude account."
+        alert.informativeText = "Name this account. Correct the email if it looks wrong\n(Claude desktop may not update it until the CLI runs)."
 
-        let field = NSTextField(frame: NSRect(x: 0, y: 0, width: 220, height: 24))
-        field.placeholderString = "e.g. personal, work"
-        alert.accessoryView = field
+        let stack = NSStackView(frame: NSRect(x: 0, y: 0, width: 260, height: 56))
+        stack.orientation = .vertical
+        stack.spacing     = 8
+        stack.alignment   = .left
+
+        let nameField = NSTextField(frame: NSRect(x: 0, y: 0, width: 260, height: 24))
+        nameField.placeholderString = "name (e.g. personal, work)"
+
+        let emailField = NSTextField(frame: NSRect(x: 0, y: 0, width: 260, height: 24))
+        emailField.placeholderString = "email"
+        emailField.stringValue = detectedEmail
+
+        stack.addArrangedSubview(nameField)
+        stack.addArrangedSubview(emailField)
+        alert.accessoryView = stack
         alert.addButton(withTitle: "Save")
         alert.addButton(withTitle: "Cancel")
-        alert.window.initialFirstResponder = field
+        alert.window.initialFirstResponder = nameField
 
         guard alert.runModal() == .alertFirstButtonReturn else { return }
 
-        let name = field.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
+        let name  = nameField.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
+        let email = emailField.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !name.isEmpty else { return }
 
         do {
-            try AccountManager.shared.saveCurrentAccount(name: name)
+            try AccountManager.shared.saveCurrentAccount(name: name, email: email.isEmpty ? nil : email)
             rebuildMenu()
         } catch {
             showError(error)
