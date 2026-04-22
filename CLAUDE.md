@@ -23,7 +23,27 @@ sudo bash ccswitch install   # copies to /usr/local/bin/ccswitch
 
 There are no automated tests. Manual testing is the verification path (see README.md).
 
-## Architecture
+## Menu bar app (menubar/)
+
+```bash
+cd menubar && make build    # compile only
+cd menubar && make install  # build + copy to /Applications
+cd menubar && make clean    # remove build artifacts
+```
+
+Requires macOS 13+. No Xcode needed — `xcrun swiftc` only.
+
+### Architecture
+
+Four files in `menubar/Sources/`:
+- `main.swift` — entry point, sets `.accessory` activation policy (no Dock icon)
+- `AppDelegate.swift` — `NSStatusItem` setup, menu building, action handlers
+- `AccountManager.swift` — all file I/O: save/apply/remove accounts, reads `~/.claude-accounts/*.json`
+- `ProcessManager.swift` — quits Claude via `NSRunningApplication.terminate()`, kills CLI via `pkill`, relaunches via `NSWorkspace.openApplication`
+
+Claude desktop bundle ID: `com.anthropic.claudefordesktop`.
+
+## CLI script architecture
 
 Everything lives in `ccswitch` — one file, one case-dispatch at the bottom routing to `cmd_*` functions.
 
