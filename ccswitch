@@ -1,0 +1,189 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+ACCOUNTS_DIR="${HOME}/.claude-accounts"
+CURRENT_FILE="${ACCOUNTS_DIR}/.current"
+CLAUDE_JSON="${HOME}/.claude.json"
+DESKTOP_CONFIG="${HOME}/Library/Application Support/Claude/config.json"
+
+_die() { echo "error: $*" >&2; exit 1; }
+
+_require_jq() {
+  command -v jq &>/dev/null || _die "jq is required (brew install jq)"
+}
+
+_init() {
+  mkdir -p "${ACCOUNTS_DIR}"
+  chmod 700 "${ACCOUNTS_DIR}"
+}
+
+_current_name() {
+  [[ -f "${CURRENT_FILE}" ]] && cat "${CURRENT_FILE}" || echo ""
+}
+
+_account_file() {
+  echo "${ACCOUNTS_DIR}/${1}.json"
+}
+
+cmd_save() {
+  local name="${1:-}"
+  [[ -n "${name}" ]] || _die "usage: ccswitch save <name>"
+  _require_jq
+  _init
+
+  [[ -f "${CLAUDE_JSON}" ]] || _die "~/.claude.json not found — are you logged in?"
+
+  local oauth_account token_cache email
+  oauth_account=$(jq '.oauthAccount' "${CLAUDE_JSON}")
+  [[ "${oauth_account}" != "null" ]] || _die "No oauthAccount found in ~/.claude.json — are you logged in?"
+  email=$(jq -r '.oauthAccount.emailAddress // "unknown"' "${CLAUDE_JSON}")
+
+  token_cache=""
+  if [[ -f "${DESKTOP_CONFIG}" ]]; then
+    token_cache=$(jq -r '.["oauth:tokenCache"] // ""' "${DESKTOP_CONFIG}")
+  fi
+
+  local dest
+  dest=$(_account_file "${name}")
+  jq -n \
+    --arg name "${name}" \
+    --arg email "${email}" \
+    --argjson oauthAccount "${oauth_account}" \
+    --arg tokenCache "${token_cache}" \
+    '{name: $name, email: $email, oauthAccount: $oauthAccount, tokenCache: $tokenCache}' \
+    > "${dest}"
+  chmod 600 "${dest}"
+
+  echo "${name}" > "${CURRENT_FILE}"
+  echo "saved: ${name} (${email})"
+}
+
+cmd_use() {
+  local name="${1:-}"
+  [[ -n "${name}" ]] || _die "usage: ccswitch use <name>"
+  _require_jq
+
+  local src
+  src=$(_account_file "${name}")
+  [[ -f "${src}" ]] || _die "account '${name}' not found — run: ccswitch ls"
+
+  local email oauth_account token_cache
+  email=$(jq -r '.email' "${src}")
+  oauth_account=$(jq '.oauthAccount' "${src}")
+  token_cache=$(jq -r '.tokenCache // ""' "${src}")
+
+  # Kill Claude processes
+  echo "stopping Claude..."
+  osascript -e 'tell application "Claude" to quit' 2>/dev/null || true
+  sleep 1
+  pkill -f "Claude Helper" 2>/dev/null || true
+  pkill -x "claude" 2>/dev/null || true
+  sleep 1
+
+  # Swap oauthAccount in ~/.claude.json
+  [[ -f "${CLAUDE_JSON}" ]] || _die "~/.claude.json not found"
+  local tmp
+  tmp=$(mktemp)
+  jq --argjson oa "${oauth_account}" '.oauthAccount = $oa' "${CLAUDE_JSON}" > "${tmp}"
+  mv "${tmp}" "${CLAUDE_JSON}"
+
+  # Swap tokenCache in desktop config
+  if [[ -f "${DESKTOP_CONFIG}" && -n "${token_cache}" ]]; then
+    tmp=$(mktemp)
+    jq --arg tc "${token_cache}" '.["oauth:tokenCache"] = $tc' "${DESKTOP_CONFIG}" > "${tmp}"
+    mv "${tmp}" "${DESKTOP_CONFIG}"
+  fi
+
+  echo "${name}" > "${CURRENT_FILE}"
+  echo "switched to: ${name} (${email})"
+
+  # Relaunch desktop app
+  read -r -p "relaunch Claude desktop app? [Y/n] " reply
+  [[ "${reply}" =~ ^[Nn]$ ]] || open -a "Claude" 2>/dev/null || true
+}
+
+cmd_ls() {
+  _init
+  local current
+  current=$(_current_name)
+  local found=0
+  for f in "${ACCOUNTS_DIR}"/*.json; do
+    [[ -f "${f}" ]] || continue
+    found=1
+    local name email
+    name=$(jq -r '.name' "${f}")
+    email=$(jq -r '.email' "${f}")
+    if [[ "${name}" == "${current}" ]]; then
+      printf "* %s (%s)\n" "${name}" "${email}"
+    else
+      printf "  %s (%s)\n" "${name}" "${email}"
+    fi
+  done
+  [[ "${found}" -eq 1 ]] || echo "no accounts saved — run: ccswitch save <name>"
+}
+
+cmd_current() {
+  local current
+  current=$(_current_name)
+  if [[ -z "${current}" ]]; then
+    echo "no active account tracked"
+    return
+  fi
+  local src email
+  src=$(_account_file "${current}")
+  if [[ -f "${src}" ]]; then
+    email=$(jq -r '.email' "${src}")
+    echo "${current} (${email})"
+  else
+    echo "${current}"
+  fi
+}
+
+cmd_rm() {
+  local name="${1:-}"
+  [[ -n "${name}" ]] || _die "usage: ccswitch rm <name>"
+  local src
+  src=$(_account_file "${name}")
+  [[ -f "${src}" ]] || _die "account '${name}' not found"
+  rm "${src}"
+  local current
+  current=$(_current_name)
+  [[ "${current}" == "${name}" ]] && rm -f "${CURRENT_FILE}" || true
+  echo "removed: ${name}"
+}
+
+cmd_install() {
+  local dest="/usr/local/bin/ccswitch"
+  local script
+  script="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/ccswitch"
+  [[ -f "${script}" ]] || _die "cannot find ccswitch script"
+  sudo cp "${script}" "${dest}"
+  sudo chmod +x "${dest}"
+  echo "installed to ${dest}"
+}
+
+usage() {
+  cat <<EOF
+ccswitch — Claude Code account switcher
+
+usage:
+  ccswitch save <name>   save current account credentials
+  ccswitch use <name>    switch to a saved account
+  ccswitch ls            list saved accounts (* = active)
+  ccswitch current       show active account
+  ccswitch rm <name>     remove a saved account
+  ccswitch install       install to /usr/local/bin
+
+accounts are stored in ~/.claude-accounts/
+EOF
+}
+
+case "${1:-}" in
+  save)    cmd_save    "${2:-}" ;;
+  use)     cmd_use     "${2:-}" ;;
+  ls|list) cmd_ls ;;
+  current) cmd_current ;;
+  rm)      cmd_rm      "${2:-}" ;;
+  install) cmd_install ;;
+  *)       usage ;;
+esac
