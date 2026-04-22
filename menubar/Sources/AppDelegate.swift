@@ -14,7 +14,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     // MARK: - Menu
 
     private func rebuildMenu() {
-        let menu = NSMenu()
+        let menu     = NSMenu()
         let accounts = AccountManager.shared.loadAccounts()
         let current  = AccountManager.shared.currentAccountName()
 
@@ -34,16 +34,23 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         }
 
         menu.addItem(.separator())
-        menu.addItem(withTitle: "Save Current Account…", action: #selector(saveAccount), keyEquivalent: "s")
-            .target = self
+
+        // "Save" is disabled when the live Claude session is already tracked
+        let saveItem = NSMenuItem(title: "Save Current Account…", action: #selector(saveAccount), keyEquivalent: "s")
+        saveItem.target    = self
+        saveItem.isEnabled = !AccountManager.shared.isCurrentSessionSaved()
+        menu.addItem(saveItem)
 
         if !accounts.isEmpty {
-            menu.addItem(withTitle: "Remove Account…", action: #selector(removeAccount), keyEquivalent: "")
+            menu.addItem(withTitle: "Rename Account…", action: #selector(renameAccount), keyEquivalent: "")
+                .target = self
+            // Label clarifies this removes the saved profile, not the Claude login
+            menu.addItem(withTitle: "Forget Account…", action: #selector(forgetAccount), keyEquivalent: "")
                 .target = self
         }
 
         menu.addItem(.separator())
-        menu.addItem(withTitle: "Quit", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q")
+        menu.addItem(NSMenuItem(title: "Quit ccswitch", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q"))
 
         statusItem.menu = menu
     }
@@ -52,6 +59,9 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 
     @objc private func switchAccount(_ sender: NSMenuItem) {
         guard let name = sender.representedObject as? String else { return }
+
+        // No-op if already on this account
+        if name == AccountManager.shared.currentAccountName() { return }
 
         ProcessManager.shared.quitClaude {
             DispatchQueue.main.async {
@@ -76,8 +86,8 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         alert.accessoryView = field
         alert.addButton(withTitle: "Save")
         alert.addButton(withTitle: "Cancel")
-
         alert.window.initialFirstResponder = field
+
         guard alert.runModal() == .alertFirstButtonReturn else { return }
 
         let name = field.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -91,18 +101,58 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         }
     }
 
-    @objc private func removeAccount() {
+    @objc private func renameAccount() {
+        let accounts = AccountManager.shared.loadAccounts()
+        guard !accounts.isEmpty else { return }
+
+        // Step 1: pick account to rename
+        let pickAlert = NSAlert()
+        pickAlert.messageText = "Rename Account"
+        pickAlert.informativeText = "Choose the account to rename."
+        let popup = NSPopUpButton(frame: NSRect(x: 0, y: 0, width: 220, height: 26))
+        for account in accounts { popup.addItem(withTitle: "\(account.name) (\(account.email))") }
+        pickAlert.accessoryView = popup
+        pickAlert.addButton(withTitle: "Next")
+        pickAlert.addButton(withTitle: "Cancel")
+        guard pickAlert.runModal() == .alertFirstButtonReturn else { return }
+
+        let oldName = accounts[popup.indexOfSelectedItem].name
+
+        // Step 2: enter new name
+        let nameAlert = NSAlert()
+        nameAlert.messageText     = "Rename \"\(oldName)\""
+        nameAlert.informativeText = "Enter a new name."
+        let field = NSTextField(frame: NSRect(x: 0, y: 0, width: 220, height: 24))
+        field.placeholderString = "new name"
+        field.stringValue = oldName
+        nameAlert.accessoryView = field
+        nameAlert.addButton(withTitle: "Rename")
+        nameAlert.addButton(withTitle: "Cancel")
+        nameAlert.window.initialFirstResponder = field
+        guard nameAlert.runModal() == .alertFirstButtonReturn else { return }
+
+        let newName = field.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !newName.isEmpty, newName != oldName else { return }
+
+        do {
+            try AccountManager.shared.renameAccount(from: oldName, to: newName)
+            rebuildMenu()
+        } catch {
+            showError(error)
+        }
+    }
+
+    @objc private func forgetAccount() {
         let accounts = AccountManager.shared.loadAccounts()
         guard !accounts.isEmpty else { return }
 
         let alert = NSAlert()
-        alert.messageText     = "Remove Account"
-        alert.informativeText = "Choose the account to remove."
-
+        alert.messageText     = "Forget Account"
+        alert.informativeText = "Remove a saved account profile. This does not log you out of Claude."
         let popup = NSPopUpButton(frame: NSRect(x: 0, y: 0, width: 220, height: 26))
         for account in accounts { popup.addItem(withTitle: "\(account.name) (\(account.email))") }
         alert.accessoryView = popup
-        alert.addButton(withTitle: "Remove")
+        alert.addButton(withTitle: "Forget")
         alert.addButton(withTitle: "Cancel")
 
         guard alert.runModal() == .alertFirstButtonReturn else { return }
@@ -120,8 +170,8 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 
     private func showError(_ error: Error) {
         let alert = NSAlert()
-        alert.alertStyle  = .critical
-        alert.messageText = "ccswitch error"
+        alert.alertStyle      = .critical
+        alert.messageText     = "ccswitch error"
         alert.informativeText = error.localizedDescription
         alert.runModal()
     }

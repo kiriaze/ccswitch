@@ -11,7 +11,7 @@ class ProcessManager {
             $0.bundleIdentifier == claudeBundleID
         }
 
-        if running.isEmpty {
+        guard !running.isEmpty else {
             killCLI()
             completion()
             return
@@ -19,7 +19,7 @@ class ProcessManager {
 
         for app in running { app.terminate() }
 
-        // Poll until the desktop app is gone (max 4s), then kill CLI and proceed
+        // Poll until gone (max 4s), then force-kill and proceed
         var attempts = 0
         Timer.scheduledTimer(withTimeInterval: 0.5, repeats: true) { timer in
             let still = NSWorkspace.shared.runningApplications.filter {
@@ -28,7 +28,7 @@ class ProcessManager {
             attempts += 1
             if still.isEmpty || attempts >= 8 {
                 timer.invalidate()
-                for app in still { app.forceTerminate() }
+                still.forEach { $0.forceTerminate() }
                 self.killCLI()
                 completion()
             }
@@ -36,13 +36,10 @@ class ProcessManager {
     }
 
     func launchClaude() {
-        guard let url = NSWorkspace.shared.urlForApplication(withBundleIdentifier: claudeBundleID)
-              ?? URL(fileURLWithPath: "/Applications/Claude.app", isDirectory: true) as URL?
-        else { return }
-        NSWorkspace.shared.openApplication(
-            at: url,
-            configuration: NSWorkspace.OpenConfiguration()
-        )
+        let task = Process()
+        task.launchPath = "/usr/bin/open"
+        task.arguments  = ["-a", "Claude"]
+        try? task.run()
     }
 
     private func killCLI() {

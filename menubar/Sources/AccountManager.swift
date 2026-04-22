@@ -15,11 +15,10 @@ class AccountManager {
 
     private init() {
         let home = FileManager.default.homeDirectoryForCurrentUser
-        accountsDir  = home.appendingPathComponent(".claude-accounts")
-        currentFile  = accountsDir.appendingPathComponent(".current")
-        claudeJSON   = home.appendingPathComponent(".claude.json")
-        desktopConfig = home
-            .appendingPathComponent("Library/Application Support/Claude/config.json")
+        accountsDir   = home.appendingPathComponent(".claude-accounts")
+        currentFile   = accountsDir.appendingPathComponent(".current")
+        claudeJSON    = home.appendingPathComponent(".claude.json")
+        desktopConfig = home.appendingPathComponent("Library/Application Support/Claude/config.json")
     }
 
     func loadAccounts() -> [Account] {
@@ -31,8 +30,8 @@ class AccountManager {
             .filter { $0.pathExtension == "json" }
             .compactMap { url -> Account? in
                 guard
-                    let data = try? Data(contentsOf: url),
-                    let obj  = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+                    let data  = try? Data(contentsOf: url),
+                    let obj   = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
                     let name  = obj["name"]  as? String,
                     let email = obj["email"] as? String
                 else { return nil }
@@ -42,20 +41,38 @@ class AccountManager {
     }
 
     func currentAccountName() -> String? {
-        try? String(contentsOf: currentFile, encoding: .utf8).trimmingCharacters(in: .whitespacesAndNewlines)
+        try? String(contentsOf: currentFile, encoding: .utf8)
+            .trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
-    // Saves the currently logged-in account under `name`.
+    /// True when the live logged-in Claude session is already saved as an account.
+    /// Used to disable "Save Current Account" when there's nothing new to save.
+    func isCurrentSessionSaved() -> Bool {
+        guard
+            let currentName = currentAccountName(),
+            let claudeData  = try? Data(contentsOf: claudeJSON),
+            let claudeObj   = try? JSONSerialization.jsonObject(with: claudeData) as? [String: Any],
+            let liveOAuth   = claudeObj["oauthAccount"] as? [String: Any],
+            let liveEmail   = liveOAuth["emailAddress"] as? String,
+            let savedData   = try? Data(contentsOf: accountFile(currentName)),
+            let savedObj    = try? JSONSerialization.jsonObject(with: savedData) as? [String: Any],
+            let savedEmail  = savedObj["email"] as? String
+        else { return false }
+        return liveEmail == savedEmail
+    }
+
+    // MARK: - Mutations
+
+    /// Snapshots the currently logged-in Claude session under `name`.
     func saveCurrentAccount(name: String) throws {
         try FileManager.default.createDirectory(at: accountsDir, withIntermediateDirectories: true)
 
         guard
-            let claudeData = try? Data(contentsOf: claudeJSON),
-            let claudeObj  = try? JSONSerialization.jsonObject(with: claudeData) as? [String: Any],
+            let claudeData   = try? Data(contentsOf: claudeJSON),
+            let claudeObj    = try? JSONSerialization.jsonObject(with: claudeData) as? [String: Any],
             let oauthAccount = claudeObj["oauthAccount"] as? [String: Any]
-        else {
-            throw CCSwitchError.notLoggedIn
-        }
+        else { throw CCSwitchError.notLoggedIn }
+
         let email = oauthAccount["emailAddress"] as? String ?? "unknown"
 
         var tokenCache = ""
@@ -72,37 +89,33 @@ class AccountManager {
             "oauthAccount": oauthAccount,
             "tokenCache":   tokenCache,
         ]
-        let dest = accountsDir.appendingPathComponent("\(name).json")
+        let dest = accountFile(name)
         let data = try JSONSerialization.data(withJSONObject: record, options: .prettyPrinted)
         try data.write(to: dest, options: .atomic)
-        try setPermissions(url: dest, octal: 0o600)
-        try currentAccountName(name)
+        try FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: dest.path)
+        try writeCurrent(name)
     }
 
-    // Writes target account credentials into the active Claude files.
+    /// Writes a saved account's credentials into the live Claude files.
     func applyAccount(name: String) throws {
-        let src = accountsDir.appendingPathComponent("\(name).json")
+        let src = accountFile(name)
         guard
-            let data = try? Data(contentsOf: src),
-            let obj  = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+            let data         = try? Data(contentsOf: src),
+            let obj          = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
             let oauthAccount = obj["oauthAccount"] as? [String: Any]
-        else {
-            throw CCSwitchError.accountNotFound(name)
-        }
+        else { throw CCSwitchError.accountNotFound(name) }
+
         let tokenCache = obj["tokenCache"] as? String ?? ""
 
-        // Patch ~/.claude.json
         guard
             let claudeData = try? Data(contentsOf: claudeJSON),
             var claudeObj  = try? JSONSerialization.jsonObject(with: claudeData) as? [String: Any]
-        else {
-            throw CCSwitchError.notLoggedIn
-        }
+        else { throw CCSwitchError.notLoggedIn }
+
         claudeObj["oauthAccount"] = oauthAccount
         let newClaudeData = try JSONSerialization.data(withJSONObject: claudeObj, options: .prettyPrinted)
         try newClaudeData.write(to: claudeJSON, options: .atomic)
 
-        // Patch desktop config
         if
             !tokenCache.isEmpty,
             let configData = try? Data(contentsOf: desktopConfig),
@@ -113,23 +126,46 @@ class AccountManager {
             try newConfigData.write(to: desktopConfig, options: .atomic)
         }
 
-        try currentAccountName(name)
+        try writeCurrent(name)
     }
 
+    /// Renames a saved account. Does not touch live Claude files.
+    func renameAccount(from oldName: String, to newName: String) throws {
+        let src  = accountFile(oldName)
+        let dest = accountFile(newName)
+
+        guard
+            let data = try? Data(contentsOf: src),
+            var obj  = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
+        else { throw CCSwitchError.accountNotFound(oldName) }
+
+        obj["name"] = newName
+        let newData = try JSONSerialization.data(withJSONObject: obj, options: .prettyPrinted)
+        try newData.write(to: dest, options: .atomic)
+        try FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: dest.path)
+        try FileManager.default.removeItem(at: src)
+
+        if currentAccountName() == oldName {
+            try writeCurrent(newName)
+        }
+    }
+
+    /// Deletes a saved account profile. Does NOT affect the live Claude session.
     func removeAccount(name: String) throws {
-        let file = accountsDir.appendingPathComponent("\(name).json")
-        try FileManager.default.removeItem(at: file)
+        try FileManager.default.removeItem(at: accountFile(name))
         if currentAccountName() == name {
             try? FileManager.default.removeItem(at: currentFile)
         }
     }
 
-    private func currentAccountName(_ name: String) throws {
-        try name.write(to: currentFile, atomically: true, encoding: .utf8)
+    // MARK: - Helpers
+
+    private func accountFile(_ name: String) -> URL {
+        accountsDir.appendingPathComponent("\(name).json")
     }
 
-    private func setPermissions(url: URL, octal: Int) throws {
-        try FileManager.default.setAttributes([.posixPermissions: octal], ofItemAtPath: url.path)
+    private func writeCurrent(_ name: String) throws {
+        try name.write(to: currentFile, atomically: true, encoding: .utf8)
     }
 }
 
@@ -140,7 +176,7 @@ enum CCSwitchError: LocalizedError {
     var errorDescription: String? {
         switch self {
         case .notLoggedIn:
-            return "No active Claude session found. Log in to Claude first."
+            return "No active Claude session found. Open Claude and log in first."
         case .accountNotFound(let name):
             return "Account '\(name)' not found."
         }
