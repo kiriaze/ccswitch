@@ -36,7 +36,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         menu.addItem(.separator())
 
         // "Save" is disabled when the live Claude session is already tracked
-        let saveItem = NSMenuItem(title: "Save Current Account…", action: #selector(saveAccount), keyEquivalent: "s")
+        let saveItem = NSMenuItem(title: "Save Current Account…", action: #selector(saveAccount), keyEquivalent: "")
         saveItem.target    = self
         saveItem.isEnabled = !AccountManager.shared.isCurrentSessionSaved()
         menu.addItem(saveItem)
@@ -50,7 +50,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         }
 
         menu.addItem(.separator())
-        menu.addItem(NSMenuItem(title: "Quit ccswitch", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q"))
+        menu.addItem(NSMenuItem(title: "Quit ccswitch", action: #selector(NSApplication.terminate(_:)), keyEquivalent: ""))
 
         statusItem.menu = menu
     }
