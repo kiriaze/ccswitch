@@ -76,20 +76,39 @@ Account profiles are stored in `~/.claude-accounts/<name>.json` (chmod 600).
 - Claude Code CLI picks up the new credentials immediately after the file swap
 - Accounts are stored locally in `~/.claude-accounts/` — no cloud sync, no keychain
 
+---
+
+## Menu bar app (v2)
+
+A native macOS menu bar app lives in `menubar/`. Requires macOS 13+, no Xcode needed — builds from the command line.
+
+### Build & install
+
+```bash
+cd menubar
+make install        # builds ccswitch.app and copies to /Applications
+```
+
+Then add **ccswitch** to **System Settings → General → Login Items** so it launches at startup.
+
+### Usage
+
+Click the `person.2.circle` icon in the menu bar:
+
+- Accounts are listed with a checkmark on the active one
+- Click any account to switch — Claude quits, credentials swap, Claude relaunches automatically
+- **Save Current Account…** — saves whoever is currently logged in (prompts for a name)
+- **Remove Account…** — removes a saved account
+
+### Updating
+
+Re-run `make install` after pulling new changes. The `.app` in `/Applications` is replaced in-place.
+
+---
+
 ## Roadmap
-
-### v2 — macOS menu bar app
-
-A native Swift menu bar app (`NSStatusItem`) that replaces the CLI for desktop users:
-
-- Lives in the macOS menu bar, launches at login
-- Dropdown shows all saved accounts; clicking one switches immediately and relaunches Claude
-- Add/remove accounts from within the app (no terminal required)
-- Active account marked, email displayed
-
-The credential swap logic stays identical — the menu bar app is just a GUI shell around the same file operations. Target: ~200 lines of Swift, zero external dependencies.
 
 ### Considered but unlikely
 
-- **Hotkeys** — probably unnecessary once the menu bar is one click away
-- **Plan usage / context window metrics** — no public Anthropic API for this; scraping the web session would be fragile
+- **Hotkeys** — unnecessary with the menu bar one click away
+- **Plan usage / context window metrics** — no public Anthropic API; scraping the web session would be fragile

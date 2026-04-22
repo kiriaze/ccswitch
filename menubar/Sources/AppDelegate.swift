@@ -1,0 +1,137 @@
+import AppKit
+
+class AppDelegate: NSObject, NSApplicationDelegate {
+    private var statusItem: NSStatusItem!
+
+    func applicationDidFinishLaunching(_ notification: Notification) {
+        statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
+        if let button = statusItem.button {
+            button.image = NSImage(systemSymbolName: "person.2.circle", accessibilityDescription: "ccswitch")
+        }
+        rebuildMenu()
+    }
+
+    // MARK: - Menu
+
+    private func rebuildMenu() {
+        let menu = NSMenu()
+        let accounts = AccountManager.shared.loadAccounts()
+        let current  = AccountManager.shared.currentAccountName()
+
+        if accounts.isEmpty {
+            let empty = NSMenuItem(title: "No accounts saved", action: nil, keyEquivalent: "")
+            empty.isEnabled = false
+            menu.addItem(empty)
+        } else {
+            for account in accounts {
+                let title = "\(account.name)  \(account.email)"
+                let item  = NSMenuItem(title: title, action: #selector(switchAccount(_:)), keyEquivalent: "")
+                item.representedObject = account.name
+                item.state  = account.name == current ? .on : .off
+                item.target = self
+                menu.addItem(item)
+            }
+        }
+
+        menu.addItem(.separator())
+        menu.addItem(withTitle: "Save Current Account…", action: #selector(saveAccount), keyEquivalent: "s")
+            .target = self
+
+        if !accounts.isEmpty {
+            menu.addItem(withTitle: "Remove Account…", action: #selector(removeAccount), keyEquivalent: "")
+                .target = self
+        }
+
+        menu.addItem(.separator())
+        menu.addItem(withTitle: "Quit", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q")
+
+        statusItem.menu = menu
+    }
+
+    // MARK: - Actions
+
+    @objc private func switchAccount(_ sender: NSMenuItem) {
+        guard let name = sender.representedObject as? String else { return }
+
+        ProcessManager.shared.quitClaude {
+            DispatchQueue.main.async {
+                do {
+                    try AccountManager.shared.applyAccount(name: name)
+                    self.rebuildMenu()
+                    ProcessManager.shared.launchClaude()
+                } catch {
+                    self.showError(error)
+                }
+            }
+        }
+    }
+
+    @objc private func saveAccount() {
+        let alert = NSAlert()
+        alert.messageText     = "Save Current Account"
+        alert.informativeText = "Enter a name for the currently logged-in Claude account."
+
+        let field = NSTextField(frame: NSRect(x: 0, y: 0, width: 220, height: 24))
+        field.placeholderString = "e.g. personal, work"
+        alert.accessoryView = field
+        alert.addButton(withTitle: "Save")
+        alert.addButton(withTitle: "Cancel")
+
+        alert.window.initialFirstResponder = field
+        guard alert.runModal() == .alertFirstButtonReturn else { return }
+
+        let name = field.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !name.isEmpty else { return }
+
+        do {
+            try AccountManager.shared.saveCurrentAccount(name: name)
+            rebuildMenu()
+        } catch {
+            showError(error)
+        }
+    }
+
+    @objc private func removeAccount() {
+        let accounts = AccountManager.shared.loadAccounts()
+        guard !accounts.isEmpty else { return }
+
+        let alert = NSAlert()
+        alert.messageText     = "Remove Account"
+        alert.informativeText = "Choose the account to remove."
+
+        let popup = NSPopUpButton(frame: NSRect(x: 0, y: 0, width: 220, height: 26))
+        for account in accounts { popup.addItem(withTitle: "\(account.name) (\(account.email))") }
+        alert.accessoryView = popup
+        alert.addButton(withTitle: "Remove")
+        alert.addButton(withTitle: "Cancel")
+
+        guard alert.runModal() == .alertFirstButtonReturn else { return }
+
+        let name = accounts[popup.indexOfSelectedItem].name
+        do {
+            try AccountManager.shared.removeAccount(name: name)
+            rebuildMenu()
+        } catch {
+            showError(error)
+        }
+    }
+
+    // MARK: - Helpers
+
+    private func showError(_ error: Error) {
+        let alert = NSAlert()
+        alert.alertStyle  = .critical
+        alert.messageText = "ccswitch error"
+        alert.informativeText = error.localizedDescription
+        alert.runModal()
+    }
+}
+
+extension NSMenu {
+    @discardableResult
+    func addItem(withTitle title: String, action: Selector?, keyEquivalent: String) -> NSMenuItem {
+        let item = NSMenuItem(title: title, action: action, keyEquivalent: keyEquivalent)
+        addItem(item)
+        return item
+    }
+}
