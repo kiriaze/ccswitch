@@ -3,19 +3,17 @@ set -euo pipefail
 
 ACCOUNTS_DIR="${HOME}/.claude-accounts"
 CURRENT_FILE="${ACCOUNTS_DIR}/.current"
+SWITCHED_AT_FILE="${ACCOUNTS_DIR}/.switched_at"
 CLAUDE_JSON="${HOME}/.claude.json"
 DESKTOP_CONFIG="${HOME}/Library/Application Support/Claude/config.json"
 
-_die() { echo "error: $*" >&2; exit 1; }
+CODEX_JSON="${HOME}/.codex/auth.json"
+CODEX_ACCOUNTS_DIR="${HOME}/.codex-accounts"
 
-_require_jq() {
-  command -v jq &>/dev/null || _die "jq is required (brew install jq)"
-}
-
-_init() {
-  mkdir -p "${ACCOUNTS_DIR}"
-  chmod 700 "${ACCOUNTS_DIR}"
-}
+_die()         { echo "error: $*" >&2; exit 1; }
+_require_jq()  { command -v jq &>/dev/null || _die "jq is required (brew install jq)"; }
+_init()        { mkdir -p "${ACCOUNTS_DIR}"; chmod 700 "${ACCOUNTS_DIR}"; }
+_init_codex()  { mkdir -p "${CODEX_ACCOUNTS_DIR}"; chmod 700 "${CODEX_ACCOUNTS_DIR}"; }
 
 _current_name() {
   [[ -f "${CURRENT_FILE}" ]] && cat "${CURRENT_FILE}" || echo ""
@@ -24,6 +22,8 @@ _current_name() {
 _account_file() {
   echo "${ACCOUNTS_DIR}/${1}.json"
 }
+
+# ── Claude ────────────────────────────────────────────────────────────────────
 
 cmd_save() {
   local name="${1:-}"
@@ -67,17 +67,24 @@ cmd_use() {
   src=$(_account_file "${name}")
   [[ -f "${src}" ]] || _die "account '${name}' not found — run: ccswitch ls"
 
+  # Warn if a Claude CLI session is actively running
+  if pgrep -f "claude" &>/dev/null; then
+    echo "warning: active Claude CLI session detected — credentials will be swapped underneath it"
+    read -r -p "continue anyway? [y/N] " reply
+    [[ "${reply}" =~ ^[Yy]$ ]] || exit 0
+  fi
+
   local email oauth_account token_cache
   email=$(jq -r '.email' "${src}")
   oauth_account=$(jq '.oauthAccount' "${src}")
   token_cache=$(jq -r '.tokenCache // ""' "${src}")
 
-  # Kill Claude processes
+  # Kill Claude desktop + all Claude CLI processes
   echo "stopping Claude..."
   osascript -e 'tell application "Claude" to quit' 2>/dev/null || true
   sleep 1
   pkill -f "Claude Helper" 2>/dev/null || true
-  pkill -x "claude" 2>/dev/null || true
+  pkill -f "claude" 2>/dev/null || true   # -f catches node-spawned claude processes
   sleep 1
 
   # Swap oauthAccount in ~/.claude.json
@@ -92,9 +99,12 @@ cmd_use() {
     tmp=$(mktemp)
     jq --arg tc "${token_cache}" '.["oauth:tokenCache"] = $tc' "${DESKTOP_CONFIG}" > "${tmp}"
     mv "${tmp}" "${DESKTOP_CONFIG}"
+  elif [[ ! -f "${DESKTOP_CONFIG}" ]]; then
+    echo "note: desktop config not found at expected path — CLI credentials swapped, desktop tokenCache skipped"
   fi
 
   echo "${name}" > "${CURRENT_FILE}"
+  date "+%Y-%m-%d %H:%M:%S" > "${SWITCHED_AT_FILE}"
   echo "switched to: ${name} (${email})"
 
   # Relaunch desktop app
@@ -120,6 +130,14 @@ cmd_ls() {
     fi
   done
   [[ "${found}" -eq 1 ]] || echo "no accounts saved — run: ccswitch save <name>"
+}
+
+cmd_status() {
+  cmd_ls
+  if [[ -f "${SWITCHED_AT_FILE}" ]]; then
+    echo ""
+    echo "last switched: $(cat "${SWITCHED_AT_FILE}")"
+  fi
 }
 
 cmd_current() {
@@ -152,6 +170,110 @@ cmd_rm() {
   echo "removed: ${name}"
 }
 
+# ── Codex ─────────────────────────────────────────────────────────────────────
+
+cmd_codex() {
+  local subcmd="${1:-}"
+  case "${subcmd}" in
+    save) cmd_codex_save "${2:-}" ;;
+    use)  cmd_codex_use  "${2:-}" ;;
+    ls)   cmd_codex_ls ;;
+    rm)   cmd_codex_rm   "${2:-}" ;;
+    *)
+      cat <<EOF
+ccswitch codex — Codex CLI account switcher
+
+usage:
+  ccswitch codex save <name>   save current Codex account
+  ccswitch codex use <name>    switch to a saved Codex account
+  ccswitch codex ls            list saved Codex accounts
+  ccswitch codex rm <name>     remove a saved Codex account
+
+accounts are stored in ~/.codex-accounts/
+EOF
+      ;;
+  esac
+}
+
+cmd_codex_save() {
+  local name="${1:-}"
+  [[ -n "${name}" ]] || _die "usage: ccswitch codex save <name>"
+  _require_jq
+  _init_codex
+
+  [[ -f "${CODEX_JSON}" ]] || _die "~/.codex/auth.json not found — are you logged in to Codex?"
+
+  local account_id
+  account_id=$(jq -r '.tokens.account_id // "unknown"' "${CODEX_JSON}")
+
+  # Wrap the full auth.json under an "auth" key alongside our metadata
+  local dest="${CODEX_ACCOUNTS_DIR}/${name}.json"
+  jq -n \
+    --arg name "${name}" \
+    --arg account_id "${account_id}" \
+    --argjson auth "$(cat "${CODEX_JSON}")" \
+    '{name: $name, account_id: $account_id, auth: $auth}' \
+    > "${dest}"
+  chmod 600 "${dest}"
+
+  echo "codex: saved ${name} (${account_id})"
+}
+
+cmd_codex_use() {
+  local name="${1:-}"
+  [[ -n "${name}" ]] || _die "usage: ccswitch codex use <name>"
+  _require_jq
+
+  local src="${CODEX_ACCOUNTS_DIR}/${name}.json"
+  [[ -f "${src}" ]] || _die "codex account '${name}' not found — run: ccswitch codex ls"
+
+  if pgrep -f "codex" &>/dev/null; then
+    echo "warning: active Codex session detected — credentials will be swapped underneath it"
+    read -r -p "continue anyway? [y/N] " reply
+    [[ "${reply}" =~ ^[Yy]$ ]] || exit 0
+  fi
+
+  local account_id
+  account_id=$(jq -r '.account_id' "${src}")
+
+  # Kill running Codex processes
+  pkill -f "codex" 2>/dev/null || true
+  sleep 1
+
+  # Write the saved auth back to ~/.codex/auth.json
+  local tmp
+  tmp=$(mktemp)
+  jq '.auth' "${src}" > "${tmp}"
+  mv "${tmp}" "${CODEX_JSON}"
+  chmod 600 "${CODEX_JSON}"
+
+  echo "codex: switched to ${name} (${account_id})"
+}
+
+cmd_codex_ls() {
+  local found=0
+  for f in "${CODEX_ACCOUNTS_DIR}"/*.json; do
+    [[ -f "${f}" ]] || continue
+    found=1
+    local name account_id
+    name=$(jq -r '.name' "${f}")
+    account_id=$(jq -r '.account_id // "unknown"' "${f}")
+    printf "  %s (%s)\n" "${name}" "${account_id}"
+  done
+  [[ "${found}" -eq 1 ]] || echo "no codex accounts saved — run: ccswitch codex save <name>"
+}
+
+cmd_codex_rm() {
+  local name="${1:-}"
+  [[ -n "${name}" ]] || _die "usage: ccswitch codex rm <name>"
+  local src="${CODEX_ACCOUNTS_DIR}/${name}.json"
+  [[ -f "${src}" ]] || _die "codex account '${name}' not found"
+  rm "${src}"
+  echo "codex: removed ${name}"
+}
+
+# ── Install ───────────────────────────────────────────────────────────────────
+
 cmd_install() {
   local dest="/usr/local/bin/ccswitch"
   local script
@@ -162,28 +284,39 @@ cmd_install() {
   echo "installed to ${dest}"
 }
 
+# ── Usage ─────────────────────────────────────────────────────────────────────
+
 usage() {
   cat <<EOF
 ccswitch — Claude Code account switcher
 
 usage:
-  ccswitch save <name>   save current account credentials
-  ccswitch use <name>    switch to a saved account
-  ccswitch ls            list saved accounts (* = active)
-  ccswitch current       show active account
-  ccswitch rm <name>     remove a saved account
-  ccswitch install       install to /usr/local/bin
+  ccswitch save <name>     save current Claude account credentials
+  ccswitch use <name>      switch to a saved Claude account
+  ccswitch ls              list saved Claude accounts (* = active)
+  ccswitch status          show accounts + last switch time
+  ccswitch current         show active Claude account
+  ccswitch rm <name>       remove a saved Claude account
 
-accounts are stored in ~/.claude-accounts/
+  ccswitch codex <cmd>     manage Codex CLI accounts (save/use/ls/rm)
+
+  ccswitch install         install to /usr/local/bin
+
+Claude accounts: ~/.claude-accounts/
+Codex accounts:  ~/.codex-accounts/
 EOF
 }
+
+# ── Dispatch ──────────────────────────────────────────────────────────────────
 
 case "${1:-}" in
   save)    cmd_save    "${2:-}" ;;
   use)     cmd_use     "${2:-}" ;;
   ls|list) cmd_ls ;;
+  status)  cmd_status ;;
   current) cmd_current ;;
   rm)      cmd_rm      "${2:-}" ;;
+  codex)   cmd_codex   "${2:-}" "${3:-}" ;;
   install) cmd_install ;;
   *)       usage ;;
 esac

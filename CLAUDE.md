@@ -53,9 +53,12 @@ Everything lives in `ccswitch` — one file, one case-dispatch at the bottom rou
 |---|---|
 | `~/.claude.json` | `.oauthAccount` (JSON object) |
 | `~/Library/Application Support/Claude/config.json` | `.["oauth:tokenCache"]` (opaque string) |
+| `~/.codex/auth.json` | entire file (Codex only) |
 
-**Account storage:** `~/.claude-accounts/<name>.json` (chmod 600), with `.current` tracking the active name.
+**Account storage:** `~/.claude-accounts/<name>.json` and `~/.codex-accounts/<name>.json` (chmod 600). `.current` and `.switched_at` track the active account and last switch time.
 
-**Switch sequence in `cmd_use`:** quit Claude via AppleScript → `pkill` CLI processes → `jq`-merge both credential files → update `.current` → optionally relaunch desktop app via `open -a "Claude"`.
+**Switch sequence in `cmd_use`:** warn if active CLI session detected → quit Claude via AppleScript → `pkill -f` CLI processes (broader than `-x` to catch node-spawned claude) → `jq`-merge both credential files → record timestamp → optionally relaunch via `open -a "Claude"`.
+
+**Codex:** `ccswitch codex save/use/ls/rm` — wraps the full `~/.codex/auth.json` under an `auth` key in `~/.codex-accounts/<name>.json`. On `use`, extracts `.auth` back to `~/.codex/auth.json`.
 
 **Important:** `~/.claude.json` is at the home root — not inside `~/.claude/`. Most other account-switcher repos get this wrong and target `~/.claude/.claude.json`.

@@ -28,11 +28,16 @@ curl -fsSL https://raw.githubusercontent.com/kiriaze/ccswitch/main/ccswitch -o /
 ## Usage
 
 ```
-ccswitch save <name>   # snapshot current account credentials
-ccswitch use <name>    # switch to a saved account (kills + restarts Claude)
-ccswitch ls            # list saved accounts (* = active)
-ccswitch current       # show active account
-ccswitch rm <name>     # remove a saved account
+ccswitch save <name>       snapshot current Claude account credentials
+ccswitch use <name>        switch to a saved Claude account
+ccswitch ls                list saved accounts (* = active)
+ccswitch status            list accounts + last switch time
+ccswitch rm <name>         remove a saved account
+
+ccswitch codex save <name> snapshot current Codex account
+ccswitch codex use <name>  switch to a saved Codex account
+ccswitch codex ls          list saved Codex accounts
+ccswitch codex rm <name>   remove a saved Codex account
 ```
 
 ## Workflow
@@ -46,6 +51,8 @@ ccswitch save personal
 # Log out of Claude, log in as account B, then:
 ccswitch save work
 ```
+
+**Knowing when to switch:** ccswitch has no visibility into token usage or reset times. Before switching, run `/status` inside your active Claude Code session to see how close you are to limits. Switch when you're near the ceiling, not after hitting it.
 
 **Switching accounts:**
 
@@ -74,7 +81,8 @@ Account profiles are stored in `~/.claude-accounts/<name>.json` (chmod 600).
 
 - The desktop app must quit and relaunch for the switch to take effect — there is no hot-reload
 - Claude Code CLI picks up the new credentials immediately after the file swap
-- Accounts are stored locally in `~/.claude-accounts/` — no cloud sync, no keychain
+- If a CLI session is actively running, `ccswitch use` will warn before swapping credentials underneath it
+- Accounts are stored locally in `~/.claude-accounts/` and `~/.codex-accounts/` — no cloud sync, no keychain
 
 ---
 
