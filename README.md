@@ -40,17 +40,42 @@ ccswitch codex ls          list saved Codex accounts
 ccswitch codex rm <name>   remove a saved Codex account
 ```
 
-## Workflow
+## Setup — adding accounts
 
-**First time setup** — do this once per account while logged in:
+> **Important:** Claude's desktop app never writes account credentials to `~/.claude.json`. You must use the CLI to authenticate each account, or the saved profile will contain the wrong identity and billing will go to the wrong account.
+
+Do this once per account:
 
 ```bash
-# Log in as account A in Claude, then:
+# 1. Log into Claude desktop as account A
+
+# 2. Clear the stale oauthAccount so the CLI is forced to re-authenticate
+jq 'del(.oauthAccount)' ~/.claude.json > /tmp/c.json && mv /tmp/c.json ~/.claude.json
+
+# 3. Open a Claude Code session in terminal — it will prompt for browser login
+#    Log in as account A when the browser opens
+claude
+
+# 4. Save the account
 ccswitch save personal
 
-# Log out of Claude, log in as account B, then:
+# 5. Log out of Claude desktop, log in as account B, then repeat steps 2–4:
+jq 'del(.oauthAccount)' ~/.claude.json > /tmp/c.json && mv /tmp/c.json ~/.claude.json
+claude   # log in as account B in browser
 ccswitch save work
 ```
+
+Verify both are captured correctly:
+
+```bash
+ccswitch status
+# personal  (accountA@example.com)
+# * work    (accountB@example.com)   ← active
+```
+
+**If you ever forget accounts and start over, follow the same steps above** — do not use "Save Current Account…" in the menu bar app alone, as it cannot capture the CLI credentials.
+
+## Workflow
 
 **Knowing when to switch:** ccswitch has no visibility into token usage or reset times. Before switching, run `/status` inside your active Claude Code session to see how close you are to limits. Switch when you're near the ceiling, not after hitting it.
 
@@ -63,6 +88,8 @@ ccswitch use work
 ccswitch use personal
 # Back to personal account
 ```
+
+The CLI and menu bar app stay in sync automatically — both read/write the same files. The menu bar app polls every 2 seconds, so CLI switches appear in the menu within 2 seconds.
 
 ## How it works
 
