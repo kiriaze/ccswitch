@@ -3,12 +3,27 @@ import AppKit
 class AppDelegate: NSObject, NSApplicationDelegate {
     private var statusItem: NSStatusItem!
 
+    private var lastKnownAccount: String? = nil
+
     func applicationDidFinishLaunching(_ notification: Notification) {
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
         if let button = statusItem.button {
             button.image = NSImage(systemSymbolName: "person.2.circle", accessibilityDescription: "ccswitch")
         }
         rebuildMenu()
+        startPolling()
+    }
+
+    private func startPolling() {
+        // Watch .current for changes made by the CLI so the menu stays in sync
+        Timer.scheduledTimer(withTimeInterval: 2.0, repeats: true) { [weak self] _ in
+            guard let self else { return }
+            let current = AccountManager.shared.currentAccountName()
+            if current != self.lastKnownAccount {
+                self.lastKnownAccount = current
+                self.rebuildMenu()
+            }
+        }
     }
 
     // MARK: - Menu
