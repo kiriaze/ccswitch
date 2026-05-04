@@ -58,20 +58,21 @@ class AccountManager {
         return email
     }
 
-    /// True when the live logged-in Claude session is already saved as an account.
-    /// Used to disable "Save Current Account" when there's nothing new to save.
+    /// True when the live tokenCache matches what's already saved for the current account.
+    /// Compares tokenCache (updated by desktop login) not email (stale in ~/.claude.json).
     func isCurrentSessionSaved() -> Bool {
         guard
             let currentName = currentAccountName(),
-            let claudeData  = try? Data(contentsOf: claudeJSON),
-            let claudeObj   = try? JSONSerialization.jsonObject(with: claudeData) as? [String: Any],
-            let liveOAuth   = claudeObj["oauthAccount"] as? [String: Any],
-            let liveEmail   = liveOAuth["emailAddress"] as? String,
+            let configData  = try? Data(contentsOf: desktopConfig),
+            let configObj   = try? JSONSerialization.jsonObject(with: configData) as? [String: Any],
+            let liveCache   = configObj["oauth:tokenCache"] as? String,
+            !liveCache.isEmpty,
             let savedData   = try? Data(contentsOf: accountFile(currentName)),
             let savedObj    = try? JSONSerialization.jsonObject(with: savedData) as? [String: Any],
-            let savedEmail  = savedObj["email"] as? String
+            let savedCache  = savedObj["tokenCache"] as? String,
+            !savedCache.isEmpty
         else { return false }
-        return liveEmail == savedEmail
+        return liveCache == savedCache
     }
 
     // MARK: - Mutations
