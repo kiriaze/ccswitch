@@ -86,6 +86,60 @@ cmd_use() {
   src=$(_account_file "${name}")
   [[ -f "${src}" ]] || _die "account '${name}' not found — run: ccswitch ls"
 
+  local email oauth_account token_cache keychain_creds
+  email=$(jq -r '.email' "${src}")
+  oauth_account=$(jq '.oauthAccount' "${src}")
+  token_cache=$(jq -r '.tokenCache // ""' "${src}")
+  keychain_creds=$(jq -r '.keychainCredentials // ""' "${src}")
+
+  # Swap oauthAccount in ~/.claude.json (CLI display + metadata)
+  if [[ -f "${CLAUDE_JSON}" ]]; then
+    local tmp
+    tmp=$(mktemp)
+    jq --argjson oa "${oauth_account}" '.oauthAccount = $oa' "${CLAUDE_JSON}" > "${tmp}"
+    mv "${tmp}" "${CLAUDE_JSON}"
+  fi
+
+  # Swap tokenCache in desktop config — this is what the desktop app reads at startup
+  # to determine which account's OAuth tokens to use for API calls (billing).
+  if [[ -f "${DESKTOP_CONFIG}" && -n "${token_cache}" ]]; then
+    local tmp
+    tmp=$(mktemp)
+    jq --arg tc "${token_cache}" '.["oauth:tokenCache"] = $tc' "${DESKTOP_CONFIG}" > "${tmp}"
+    mv "${tmp}" "${DESKTOP_CONFIG}"
+  elif [[ ! -f "${DESKTOP_CONFIG}" ]]; then
+    echo "note: desktop config not found — desktop tokenCache skipped"
+  fi
+
+  # Swap CLI auth token in Keychain
+  if [[ -n "${keychain_creds}" ]]; then
+    security add-generic-password -U -s "Claude Code-credentials" -a "$(whoami)" -w "${keychain_creds}" 2>/dev/null || \
+      echo "warning: could not update keychain — CLI may bill wrong account (run: ccswitch save ${name})"
+  else
+    echo "warning: no keychain credentials for '${name}' — run: ccswitch save ${name}"
+  fi
+
+  echo "${name}" > "${CURRENT_FILE}"
+  date "+%Y-%m-%d %H:%M:%S" > "${SWITCHED_AT_FILE}"
+  echo "billing → ${name} (${email})"
+
+  # Restart desktop app so it picks up the new tokenCache.
+  # Cookies are NOT swapped — the displayed account and sessions stay unchanged.
+  echo "restarting Claude..."
+  osascript -e 'tell application "Claude" to quit' 2>/dev/null || true
+  sleep 1
+  open -a "Claude" 2>/dev/null || true
+}
+
+cmd_switch() {
+  local name="${1:-}"
+  [[ -n "${name}" ]] || _die "usage: ccswitch switch <name>"
+  _require_jq
+
+  local src
+  src=$(_account_file "${name}")
+  [[ -f "${src}" ]] || _die "account '${name}' not found — run: ccswitch ls"
+
   # Warn if a Claude CLI session is actively running
   if pgrep -f "claude" &>/dev/null; then
     echo "warning: active Claude CLI session detected — credentials will be swapped underneath it"
@@ -104,7 +158,7 @@ cmd_use() {
   osascript -e 'tell application "Claude" to quit' 2>/dev/null || true
   sleep 1
   pkill -f "Claude Helper" 2>/dev/null || true
-  pkill -f "claude" 2>/dev/null || true   # -f catches node-spawned claude processes
+  pkill -f "claude" 2>/dev/null || true
   sleep 1
 
   # Swap oauthAccount in ~/.claude.json
@@ -120,33 +174,26 @@ cmd_use() {
     jq --arg tc "${token_cache}" '.["oauth:tokenCache"] = $tc' "${DESKTOP_CONFIG}" > "${tmp}"
     mv "${tmp}" "${DESKTOP_CONFIG}"
   elif [[ ! -f "${DESKTOP_CONFIG}" ]]; then
-    echo "note: desktop config not found at expected path — CLI credentials swapped, desktop tokenCache skipped"
+    echo "note: desktop config not found — desktop tokenCache skipped"
   fi
 
-  # Swap desktop app Cookies — sessionKey cookie authenticates all desktop app requests
-  # including billing. Must be swapped alongside tokenCache for a complete session switch.
+  # Swap Cookies — changes the displayed account and all session UI in the desktop app
   local cookies_src
   cookies_src=$(_account_cookies_file "${name}")
   if [[ -f "${cookies_src}" ]]; then
     cp "${cookies_src}" "${DESKTOP_COOKIES}"
     rm -f "${DESKTOP_COOKIES}-journal" "${DESKTOP_COOKIES}-wal" "${DESKTOP_COOKIES}-shm"
   else
-    echo "warning: no cookies saved for '${name}' — desktop app may bill the wrong account"
+    echo "warning: no cookies saved for '${name}' — desktop UI may show wrong account"
     echo "         re-save this account: ccswitch save ${name}"
   fi
 
-  # Swap CLI auth token in Keychain — this is the Bearer token the Claude Code CLI
-  # sends for API calls. Without this swap the CLI always bills the last-authed account.
+  # Swap CLI auth token in Keychain
   if [[ -n "${keychain_creds}" ]]; then
-    if security add-generic-password -U -s "Claude Code-credentials" -a "$(whoami)" -w "${keychain_creds}" 2>/dev/null; then
-      : # silent success
-    else
-      echo "warning: could not update keychain — CLI may bill to wrong account"
-      echo "         run: ccswitch save ${name}  (to re-capture credentials)"
-    fi
+    security add-generic-password -U -s "Claude Code-credentials" -a "$(whoami)" -w "${keychain_creds}" 2>/dev/null || \
+      echo "warning: could not update keychain — CLI may bill wrong account (run: ccswitch save ${name})"
   else
-    echo "warning: no keychain credentials saved for '${name}'"
-    echo "         re-save this account: ccswitch save ${name}"
+    echo "warning: no keychain credentials for '${name}' — run: ccswitch save ${name}"
   fi
 
   echo "${name}" > "${CURRENT_FILE}"
@@ -340,7 +387,8 @@ ccswitch — Claude Code account switcher
 
 usage:
   ccswitch save <name>     save current Claude account credentials
-  ccswitch use <name>      switch to a saved Claude account
+  ccswitch use <name>      swap billing to a saved account (UI unchanged)
+  ccswitch switch <name>   fully switch account including desktop UI
   ccswitch ls              list saved Claude accounts (* = active)
   ccswitch status          show accounts + last switch time
   ccswitch current         show active Claude account
@@ -360,6 +408,7 @@ EOF
 case "${1:-}" in
   save)    cmd_save    "${2:-}" ;;
   use)     cmd_use     "${2:-}" ;;
+  switch)  cmd_switch  "${2:-}" ;;
   ls|list) cmd_ls ;;
   status)  cmd_status ;;
   current) cmd_current ;;

@@ -130,7 +130,10 @@ class AccountManager {
         try writeCurrent(name)
     }
 
-    /// Writes a saved account's credentials into the live Claude files.
+    /// Swaps billing to a saved account without changing the desktop UI session.
+    /// Swaps tokenCache + Keychain only — Cookies are untouched so the displayed
+    /// account and all open sessions remain exactly as they are.
+    /// The desktop app must be restarted by the caller for the new tokenCache to take effect.
     func applyAccount(name: String) throws {
         let src = accountFile(name)
         guard
@@ -142,15 +145,17 @@ class AccountManager {
         let tokenCache          = obj["tokenCache"]          as? String ?? ""
         let keychainCredentials = obj["keychainCredentials"] as? String ?? ""
 
-        guard
+        // Swap oauthAccount in ~/.claude.json (CLI display + metadata)
+        if
             let claudeData = try? Data(contentsOf: claudeJSON),
             var claudeObj  = try? JSONSerialization.jsonObject(with: claudeData) as? [String: Any]
-        else { throw CCSwitchError.notLoggedIn }
+        {
+            claudeObj["oauthAccount"] = oauthAccount
+            let newClaudeData = try JSONSerialization.data(withJSONObject: claudeObj, options: .prettyPrinted)
+            try newClaudeData.write(to: claudeJSON, options: .atomic)
+        }
 
-        claudeObj["oauthAccount"] = oauthAccount
-        let newClaudeData = try JSONSerialization.data(withJSONObject: claudeObj, options: .prettyPrinted)
-        try newClaudeData.write(to: claudeJSON, options: .atomic)
-
+        // Swap tokenCache — desktop app reads this at startup to determine billing account.
         if
             !tokenCache.isEmpty,
             let configData = try? Data(contentsOf: desktopConfig),
@@ -161,13 +166,24 @@ class AccountManager {
             try newConfigData.write(to: desktopConfig, options: .atomic)
         }
 
-        // Restore CLI auth token in Keychain so the Claude Code CLI bills the right account.
+        // Swap CLI auth token in Keychain.
         if !keychainCredentials.isEmpty {
             writeKeychainCredentials(keychainCredentials)
         }
 
-        // Restore desktop app Cookies — sessionKey cookie authenticates all desktop app
-        // requests including billing. Must be swapped for a complete session switch.
+        // Cookies intentionally NOT swapped — UI session stays on the current account.
+
+        try writeCurrent(name)
+    }
+
+    /// Fully switches the desktop app to a saved account, including the UI session.
+    /// Swaps tokenCache + Keychain + Cookies — the displayed account changes completely.
+    /// The desktop app must be restarted by the caller for all changes to take effect.
+    func switchAccount(name: String) throws {
+        // Apply billing credentials first
+        try applyAccount(name: name)
+
+        // Also swap Cookies to change the displayed account in the desktop UI
         let cookiesSrc = cookiesFile(name)
         if FileManager.default.fileExists(atPath: cookiesSrc.path) {
             try? FileManager.default.removeItem(at: desktopCookies)
@@ -177,8 +193,6 @@ class AccountManager {
                 try? FileManager.default.removeItem(at: stale)
             }
         }
-
-        try writeCurrent(name)
     }
 
     /// Renames a saved account. Does not touch live Claude files.
