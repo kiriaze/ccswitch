@@ -13,13 +13,15 @@ class AccountManager {
     private let currentFile: URL
     private let claudeJSON: URL
     private let desktopConfig: URL
+    private let desktopCookies: URL
 
     private init() {
         let home = FileManager.default.homeDirectoryForCurrentUser
-        accountsDir   = home.appendingPathComponent(".claude-accounts")
-        currentFile   = accountsDir.appendingPathComponent(".current")
-        claudeJSON    = home.appendingPathComponent(".claude.json")
-        desktopConfig = home.appendingPathComponent("Library/Application Support/Claude/config.json")
+        accountsDir    = home.appendingPathComponent(".claude-accounts")
+        currentFile    = accountsDir.appendingPathComponent(".current")
+        claudeJSON     = home.appendingPathComponent(".claude.json")
+        desktopConfig  = home.appendingPathComponent("Library/Application Support/Claude/config.json")
+        desktopCookies = home.appendingPathComponent("Library/Application Support/Claude/Cookies")
     }
 
     func loadAccounts() -> [Account] {
@@ -115,6 +117,16 @@ class AccountManager {
         let data = try JSONSerialization.data(withJSONObject: record, options: .prettyPrinted)
         try data.write(to: dest, options: .atomic)
         try FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: dest.path)
+
+        // Save desktop app Cookies — holds sessionKey that authenticates all desktop app
+        // requests including billing. Without this, only CLI credential swaps work.
+        if FileManager.default.fileExists(atPath: desktopCookies.path) {
+            let cookiesDest = cookiesFile(name)
+            try? FileManager.default.removeItem(at: cookiesDest)
+            try FileManager.default.copyItem(at: desktopCookies, to: cookiesDest)
+            try? FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: cookiesDest.path)
+        }
+
         try writeCurrent(name)
     }
 
@@ -154,6 +166,18 @@ class AccountManager {
             writeKeychainCredentials(keychainCredentials)
         }
 
+        // Restore desktop app Cookies — sessionKey cookie authenticates all desktop app
+        // requests including billing. Must be swapped for a complete session switch.
+        let cookiesSrc = cookiesFile(name)
+        if FileManager.default.fileExists(atPath: cookiesSrc.path) {
+            try? FileManager.default.removeItem(at: desktopCookies)
+            try FileManager.default.copyItem(at: cookiesSrc, to: desktopCookies)
+            for ext in ["-journal", "-wal", "-shm"] {
+                let stale = URL(fileURLWithPath: desktopCookies.path + ext)
+                try? FileManager.default.removeItem(at: stale)
+            }
+        }
+
         try writeCurrent(name)
     }
 
@@ -181,6 +205,7 @@ class AccountManager {
     /// Deletes a saved account profile. Does NOT affect the live Claude session.
     func removeAccount(name: String) throws {
         try FileManager.default.removeItem(at: accountFile(name))
+        try? FileManager.default.removeItem(at: cookiesFile(name))
         if currentAccountName() == name {
             try? FileManager.default.removeItem(at: currentFile)
         }
@@ -190,6 +215,10 @@ class AccountManager {
 
     private func accountFile(_ name: String) -> URL {
         accountsDir.appendingPathComponent("\(name).json")
+    }
+
+    private func cookiesFile(_ name: String) -> URL {
+        accountsDir.appendingPathComponent("\(name).cookies")
     }
 
     private func writeCurrent(_ name: String) throws {

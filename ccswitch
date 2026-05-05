@@ -6,6 +6,7 @@ CURRENT_FILE="${ACCOUNTS_DIR}/.current"
 SWITCHED_AT_FILE="${ACCOUNTS_DIR}/.switched_at"
 CLAUDE_JSON="${HOME}/.claude.json"
 DESKTOP_CONFIG="${HOME}/Library/Application Support/Claude/config.json"
+DESKTOP_COOKIES="${HOME}/Library/Application Support/Claude/Cookies"
 
 CODEX_JSON="${HOME}/.codex/auth.json"
 CODEX_ACCOUNTS_DIR="${HOME}/.codex-accounts"
@@ -21,6 +22,10 @@ _current_name() {
 
 _account_file() {
   echo "${ACCOUNTS_DIR}/${1}.json"
+}
+
+_account_cookies_file() {
+  echo "${ACCOUNTS_DIR}/${1}.cookies"
 }
 
 # ── Claude ────────────────────────────────────────────────────────────────────
@@ -48,8 +53,9 @@ cmd_save() {
   # the display name, not the account being billed.
   keychain_creds=$(security find-generic-password -s "Claude Code-credentials" -w 2>/dev/null || echo "")
 
-  local dest
+  local dest cookies_dest
   dest=$(_account_file "${name}")
+  cookies_dest=$(_account_cookies_file "${name}")
   jq -n \
     --arg name "${name}" \
     --arg email "${email}" \
@@ -59,6 +65,13 @@ cmd_save() {
     '{name: $name, email: $email, oauthAccount: $oauthAccount, tokenCache: $tokenCache, keychainCredentials: $keychainCredentials}' \
     > "${dest}"
   chmod 600 "${dest}"
+
+  # Save desktop app Cookies — holds the sessionKey that authenticates all desktop app
+  # requests (including billing). Without this, only CLI credential swaps work.
+  if [[ -f "${DESKTOP_COOKIES}" ]]; then
+    cp "${DESKTOP_COOKIES}" "${cookies_dest}"
+    chmod 600 "${cookies_dest}"
+  fi
 
   echo "${name}" > "${CURRENT_FILE}"
   echo "saved: ${name} (${email})"
@@ -108,6 +121,18 @@ cmd_use() {
     mv "${tmp}" "${DESKTOP_CONFIG}"
   elif [[ ! -f "${DESKTOP_CONFIG}" ]]; then
     echo "note: desktop config not found at expected path — CLI credentials swapped, desktop tokenCache skipped"
+  fi
+
+  # Swap desktop app Cookies — sessionKey cookie authenticates all desktop app requests
+  # including billing. Must be swapped alongside tokenCache for a complete session switch.
+  local cookies_src
+  cookies_src=$(_account_cookies_file "${name}")
+  if [[ -f "${cookies_src}" ]]; then
+    cp "${cookies_src}" "${DESKTOP_COOKIES}"
+    rm -f "${DESKTOP_COOKIES}-journal" "${DESKTOP_COOKIES}-wal" "${DESKTOP_COOKIES}-shm"
+  else
+    echo "warning: no cookies saved for '${name}' — desktop app may bill the wrong account"
+    echo "         re-save this account: ccswitch save ${name}"
   fi
 
   # Swap CLI auth token in Keychain — this is the Bearer token the Claude Code CLI
@@ -185,6 +210,7 @@ cmd_rm() {
   src=$(_account_file "${name}")
   [[ -f "${src}" ]] || _die "account '${name}' not found"
   rm "${src}"
+  rm -f "$(_account_cookies_file "${name}")"
   local current
   current=$(_current_name)
   [[ "${current}" == "${name}" ]] && rm -f "${CURRENT_FILE}" || true
@@ -296,12 +322,13 @@ cmd_codex_rm() {
 # ── Install ───────────────────────────────────────────────────────────────────
 
 cmd_install() {
-  local dest="/usr/local/bin/ccswitch"
+  local dest="${HOME}/.local/bin/ccswitch"
   local script
   script="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/ccswitch"
   [[ -f "${script}" ]] || _die "cannot find ccswitch script"
-  sudo cp "${script}" "${dest}"
-  sudo chmod +x "${dest}"
+  mkdir -p "$(dirname "${dest}")"
+  cp "${script}" "${dest}"
+  chmod +x "${dest}"
   echo "installed to ${dest}"
 }
 
@@ -321,7 +348,7 @@ usage:
 
   ccswitch codex <cmd>     manage Codex CLI accounts (save/use/ls/rm)
 
-  ccswitch install         install to /usr/local/bin
+  ccswitch install         install to ~/.local/bin
 
 Claude accounts: ~/.claude-accounts/
 Codex accounts:  ~/.codex-accounts/
