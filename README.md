@@ -42,7 +42,7 @@ ccswitch codex rm <name>   remove a saved Codex account
 
 ## Setup — adding accounts
 
-> **Important:** Claude's desktop app never writes account credentials to `~/.claude.json`. You must use the CLI to authenticate each account, or the saved profile will contain the wrong identity and billing will go to the wrong account.
+> **Important:** Claude's desktop app never writes account credentials to `~/.claude.json`. You must use the CLI to authenticate each account. The CLI authentication step is what saves the Keychain token that determines which account is billed — skipping it means the wrong account gets charged.
 
 Do this once per account:
 
@@ -56,7 +56,7 @@ jq 'del(.oauthAccount)' ~/.claude.json > /tmp/c.json && mv /tmp/c.json ~/.claude
 #    Log in as account A when the browser opens
 claude
 
-# 4. Save the account
+# 4. Save the account (captures both the profile and the Keychain token)
 ccswitch save personal
 
 # 5. Log out of Claude desktop, log in as account B, then repeat steps 2–4:
@@ -73,7 +73,7 @@ ccswitch status
 # * work    (accountB@example.com)   ← active
 ```
 
-**If you ever forget accounts and start over, follow the same steps above** — do not use "Save Current Account…" in the menu bar app alone, as it cannot capture the CLI credentials.
+**If you ever forget accounts and start over, follow the same steps above.** Do not use "Save Current Account…" in the menu bar app alone — it saves the profile but you still need `claude` CLI auth to capture the Keychain token for correct billing.
 
 ## Workflow
 

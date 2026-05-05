@@ -33,7 +33,7 @@ cmd_save() {
 
   [[ -f "${CLAUDE_JSON}" ]] || _die "~/.claude.json not found — are you logged in?"
 
-  local oauth_account token_cache email
+  local oauth_account token_cache email keychain_creds
   oauth_account=$(jq '.oauthAccount' "${CLAUDE_JSON}")
   [[ "${oauth_account}" != "null" ]] || _die "No oauthAccount found in ~/.claude.json — are you logged in?"
   email=$(jq -r '.oauthAccount.emailAddress // "unknown"' "${CLAUDE_JSON}")
@@ -43,6 +43,11 @@ cmd_save() {
     token_cache=$(jq -r '.["oauth:tokenCache"] // ""' "${DESKTOP_CONFIG}")
   fi
 
+  # Capture CLI auth token from Keychain — this is what the Claude Code CLI uses for
+  # actual API calls (and therefore billing). Without it, switching accounts only changes
+  # the display name, not the account being billed.
+  keychain_creds=$(security find-generic-password -s "Claude Code-credentials" -w 2>/dev/null || echo "")
+
   local dest
   dest=$(_account_file "${name}")
   jq -n \
@@ -50,7 +55,8 @@ cmd_save() {
     --arg email "${email}" \
     --argjson oauthAccount "${oauth_account}" \
     --arg tokenCache "${token_cache}" \
-    '{name: $name, email: $email, oauthAccount: $oauthAccount, tokenCache: $tokenCache}' \
+    --arg keychainCredentials "${keychain_creds}" \
+    '{name: $name, email: $email, oauthAccount: $oauthAccount, tokenCache: $tokenCache, keychainCredentials: $keychainCredentials}' \
     > "${dest}"
   chmod 600 "${dest}"
 
@@ -74,10 +80,11 @@ cmd_use() {
     [[ "${reply}" =~ ^[Yy]$ ]] || exit 0
   fi
 
-  local email oauth_account token_cache
+  local email oauth_account token_cache keychain_creds
   email=$(jq -r '.email' "${src}")
   oauth_account=$(jq '.oauthAccount' "${src}")
   token_cache=$(jq -r '.tokenCache // ""' "${src}")
+  keychain_creds=$(jq -r '.keychainCredentials // ""' "${src}")
 
   # Kill Claude desktop + all Claude CLI processes
   echo "stopping Claude..."
@@ -101,6 +108,20 @@ cmd_use() {
     mv "${tmp}" "${DESKTOP_CONFIG}"
   elif [[ ! -f "${DESKTOP_CONFIG}" ]]; then
     echo "note: desktop config not found at expected path — CLI credentials swapped, desktop tokenCache skipped"
+  fi
+
+  # Swap CLI auth token in Keychain — this is the Bearer token the Claude Code CLI
+  # sends for API calls. Without this swap the CLI always bills the last-authed account.
+  if [[ -n "${keychain_creds}" ]]; then
+    if security add-generic-password -U -s "Claude Code-credentials" -a "$(whoami)" -w "${keychain_creds}" 2>/dev/null; then
+      : # silent success
+    else
+      echo "warning: could not update keychain — CLI may bill to wrong account"
+      echo "         run: ccswitch save ${name}  (to re-capture credentials)"
+    fi
+  else
+    echo "warning: no keychain credentials saved for '${name}'"
+    echo "         re-save this account: ccswitch save ${name}"
   fi
 
   echo "${name}" > "${CURRENT_FILE}"

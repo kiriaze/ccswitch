@@ -49,15 +49,20 @@ Everything lives in `ccswitch` — one file, one case-dispatch at the bottom rou
 
 **Credential files touched on macOS:**
 
-| File | Key swapped |
-|---|---|
-| `~/.claude.json` | `.oauthAccount` (JSON object) |
-| `~/Library/Application Support/Claude/config.json` | `.["oauth:tokenCache"]` (opaque string) |
-| `~/.codex/auth.json` | entire file (Codex only) |
+| Location | What's stored | Who uses it |
+|---|---|---|
+| `~/.claude.json` `.oauthAccount` | Account metadata (email, UUID, billing plan) | CLI display only — NOT auth |
+| `~/Library/Application Support/Claude/config.json` `["oauth:tokenCache"]` | Chromium-encrypted OAuth tokens (`v10...` prefix) | Claude desktop app |
+| Keychain `"Claude Code-credentials"` | Raw JSON `{claudeAiOauth: {accessToken, refreshToken, ...}}` | Claude Code CLI — the actual Bearer token for API calls and billing |
+| `~/.codex/auth.json` | Codex CLI auth | Codex only |
+
+**The Keychain entry is the billing-critical piece.** The `oauthAccount` in `~/.claude.json` is purely display metadata — the CLI reads the Keychain to get the actual access token it sends with every API request. Not swapping the Keychain is why earlier versions of ccswitch billed the wrong account.
 
 **Account storage:** `~/.claude-accounts/<name>.json` and `~/.codex-accounts/<name>.json` (chmod 600). `.current` and `.switched_at` track the active account and last switch time.
 
-**Switch sequence in `cmd_use`:** warn if active CLI session detected → quit Claude via AppleScript → `pkill -f` CLI processes (broader than `-x` to catch node-spawned claude) → `jq`-merge both credential files → record timestamp → optionally relaunch via `open -a "Claude"`.
+Account profile format: `{name, email, oauthAccount, tokenCache, keychainCredentials}`. The `keychainCredentials` field was added in v1.2.0.
+
+**Switch sequence in `cmd_use`:** warn if active CLI session detected → quit Claude via AppleScript → `pkill -f` CLI processes (broader than `-x` to catch node-spawned claude) → `jq`-merge credential files → `security add-generic-password -U` to update Keychain → record timestamp → optionally relaunch via `open -a "Claude"`.
 
 **Codex:** `ccswitch codex save/use/ls/rm` — wraps the full `~/.codex/auth.json` under an `auth` key in `~/.codex-accounts/<name>.json`. On `use`, extracts `.auth` back to `~/.codex/auth.json`.
 

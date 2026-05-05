@@ -1,4 +1,5 @@
 import Foundation
+import Security
 
 struct Account {
     let name: String
@@ -99,11 +100,16 @@ class AccountManager {
             tokenCache = configObj["oauth:tokenCache"] as? String ?? ""
         }
 
+        // Capture the CLI's Keychain auth token — the actual Bearer token used for API
+        // calls and billing. Without this, switching only changes the display name.
+        let keychainCredentials = readKeychainCredentials() ?? ""
+
         let record: [String: Any] = [
-            "name":         name,
-            "email":        email,
-            "oauthAccount": oauthAccount,
-            "tokenCache":   tokenCache,
+            "name":                name,
+            "email":               email,
+            "oauthAccount":        oauthAccount,
+            "tokenCache":          tokenCache,
+            "keychainCredentials": keychainCredentials,
         ]
         let dest = accountFile(name)
         let data = try JSONSerialization.data(withJSONObject: record, options: .prettyPrinted)
@@ -121,7 +127,8 @@ class AccountManager {
             let oauthAccount = obj["oauthAccount"] as? [String: Any]
         else { throw CCSwitchError.accountNotFound(name) }
 
-        let tokenCache = obj["tokenCache"] as? String ?? ""
+        let tokenCache          = obj["tokenCache"]          as? String ?? ""
+        let keychainCredentials = obj["keychainCredentials"] as? String ?? ""
 
         guard
             let claudeData = try? Data(contentsOf: claudeJSON),
@@ -140,6 +147,11 @@ class AccountManager {
             configObj["oauth:tokenCache"] = tokenCache
             let newConfigData = try JSONSerialization.data(withJSONObject: configObj, options: .prettyPrinted)
             try newConfigData.write(to: desktopConfig, options: .atomic)
+        }
+
+        // Restore CLI auth token in Keychain so the Claude Code CLI bills the right account.
+        if !keychainCredentials.isEmpty {
+            writeKeychainCredentials(keychainCredentials)
         }
 
         try writeCurrent(name)
@@ -182,6 +194,44 @@ class AccountManager {
 
     private func writeCurrent(_ name: String) throws {
         try name.write(to: currentFile, atomically: true, encoding: .utf8)
+    }
+
+    // MARK: - Keychain (CLI Bearer token)
+
+    private let keychainService = "Claude Code-credentials"
+    private var keychainAccount: String { NSUserName() }
+
+    /// Reads the CLI's OAuth token from the macOS Keychain.
+    /// This is the Bearer token the Claude Code CLI sends for all API calls.
+    func readKeychainCredentials() -> String? {
+        let query: [String: Any] = [
+            kSecClass          as String: kSecClassGenericPassword,
+            kSecAttrService    as String: keychainService,
+            kSecAttrAccount    as String: keychainAccount,
+            kSecReturnData     as String: true,
+            kSecMatchLimit     as String: kSecMatchLimitOne,
+        ]
+        var result: AnyObject?
+        let status = SecItemCopyMatching(query as CFDictionary, &result)
+        guard status == errSecSuccess, let data = result as? Data else { return nil }
+        return String(data: data, encoding: .utf8)
+    }
+
+    /// Writes (creates or updates) the CLI's OAuth token in the macOS Keychain.
+    func writeKeychainCredentials(_ value: String) {
+        guard let data = value.data(using: .utf8) else { return }
+        let query: [String: Any] = [
+            kSecClass       as String: kSecClassGenericPassword,
+            kSecAttrService as String: keychainService,
+            kSecAttrAccount as String: keychainAccount,
+        ]
+        let attributes: [String: Any] = [kSecValueData as String: data]
+        let updateStatus = SecItemUpdate(query as CFDictionary, attributes as CFDictionary)
+        if updateStatus == errSecItemNotFound {
+            var newItem = query
+            newItem[kSecValueData as String] = data
+            SecItemAdd(newItem as CFDictionary, nil)
+        }
     }
 }
 
